@@ -53,13 +53,19 @@ Sockets.init = function (server) {
 			domain = parsedUrl.hostname;	// cookies don't provide isolation by port: http://stackoverflow.com/a/16328399/122353
 		}
 
-		if (!override) {
-			io.origins(parsedUrl.protocol + '//' + domain + ':*');
-			winston.info('[socket.io] Restricting access to origin: ' + parsedUrl.protocol + '//' + domain + ':*');
-		} else {
-			io.origins(override);
-			winston.info('[socket.io] Restricting access to origin: ' + override);
+		var originUrl = override;
+		if (!originUrl) {
+			originUrl = parsedUrl.protocol + '//' + domain;
 		}
+		winston.info('[socket.io] Restricting access to origin: ' + originUrl);
+		io.origins((origin, callback) => {
+			if (origin.startsWith(originUrl) || origin.startsWith('*')) {
+				return callback(null, true);
+			}
+			winston.error('[socket.io] rejecting origin: ' + origin);
+			winston.error('[socket.io] expected origin: ' + originUrl);
+			return callback('origin not allowed', false);
+		});
 	}
 
 	io.listen(server, {
