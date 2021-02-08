@@ -15,7 +15,13 @@ var utils = require('../utils');
 module.exports = function (User) {
 	User.getInvites = async function (uid) {
 		const emails = await db.getSetMembers('invitation:uid:' + uid);
-		return emails.map(email => validator.escape(String(email)));
+		const expirations = (await async.map(emails.map(email => 'invitation:email:' + email), db.pttl)).map(ts => (ts > 0 ? Date.now() + ts : 0));
+
+		return emails.map((email, i) => ({
+			inviter_uid: uid,
+			email: validator.escape(String(email)),
+			expireAt: expirations[i],
+		}));
 	};
 
 	User.getInvitesNumber = async function (uid) {
@@ -29,6 +35,7 @@ module.exports = function (User) {
 	User.getAllInvites = async function () {
 		const uids = await User.getInvitingUsers();
 		const invitations = await async.map(uids, User.getInvites);
+
 		return invitations.map(function (invites, index) {
 			return {
 				uid: uids[index],

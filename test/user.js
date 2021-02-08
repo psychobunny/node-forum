@@ -2216,7 +2216,7 @@ describe('User', function () {
 			it('should escape email', async () => {
 				await helpers.invite({ emails: '<script>alert("ok");</script>', groupsToJoin: [] }, adminUid, jar, csrf_token);
 				const data = await User.getInvites(adminUid);
-				assert.strictEqual(data[0], '&lt;script&gt;alert(&quot;ok&quot;);&lt;&#x2F;script&gt;');
+				assert.strictEqual(data[0].email, '&lt;script&gt;alert(&quot;ok&quot;);&lt;&#x2F;script&gt;');
 				await User.deleteInvitationKey('<script>alert("ok");</script>');
 			});
 
@@ -2230,8 +2230,12 @@ describe('User', function () {
 			it('should get user\'s invites', function (done) {
 				User.getInvites(inviterUid, function (err, data) {
 					assert.ifError(err);
+					assert(data.length);
+					assert(data[0].email);
+
+					const emails = data.map(invite => invite.email);
 					Array.from(Array(6)).forEach((_, i) => {
-						assert.notEqual(data.indexOf('invite' + (i + 1) + '@test.com'), -1);
+						assert(emails.includes('invite' + (i + 1) + '@test.com'));
 					});
 					done();
 				});
@@ -2240,13 +2244,15 @@ describe('User', function () {
 			it('should get all invites', function (done) {
 				User.getAllInvites(function (err, data) {
 					assert.ifError(err);
+					assert(data[0].invitations.length);
+					assert(data[0].invitations[0].email);
 
 					var adminData = data.filter(d => parseInt(d.uid, 10) === adminUid)[0];
-					assert.notEqual(adminData.invitations.indexOf('invite99@test.com'), -1);
+					assert(adminData.invitations.some(invitation => invitation.email === 'invite99@test.com'));
 
 					var inviterData = data.filter(d => parseInt(d.uid, 10) === inviterUid)[0];
 					Array.from(Array(6)).forEach((_, i) => {
-						assert.notEqual(inviterData.invitations.indexOf('invite' + (i + 1) + '@test.com'), -1);
+						assert(inviterData.invitations.some(invitation => invitation.email === 'invite' + (i + 1) + '@test.com'));
 					});
 
 					done();

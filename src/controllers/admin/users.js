@@ -213,13 +213,14 @@ async function getInvites() {
 		return usernames.map(user => user.username);
 	}
 
-	usernames = await Promise.all(invitations.map(invites => getUsernamesByEmails(invites.invitations)));
+	usernames = await Promise.all(invitations.map(invites => getUsernamesByEmails(invites.invitations.map(invite => invite.email))));
 
 	invitations.forEach(function (invites, index) {
-		invites.invitations = invites.invitations.map(function (email, i) {
+		invites.invitations = invites.invitations.map(function (invite, i) {
 			return {
-				email: email,
+				email: invite.email,
 				username: usernames[index][i] === '[[global:guest]]' ? '' : usernames[index][i],
+				expireAtISO: invite.expireAt ? new Date(invite.expireAt).toISOString() : 0,
 			};
 		});
 	});
