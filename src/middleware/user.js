@@ -269,7 +269,7 @@ module.exports = function (middleware) {
 		});
 		if (!allowed.includes(path)) {
 			// Append user data if present
-			req.session.registration.uid = req.uid;
+			req.session.registration.uid = req.session.registration.uid || req.uid;
 
 			controllers.helpers.redirect(res, '/register/complete');
 		} else {
