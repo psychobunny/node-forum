@@ -78,7 +78,24 @@ editController.username = async function (req, res, next) {
 };
 
 editController.email = async function (req, res, next) {
-	await renderRoute('email', req, res, next);
+	const targetUid = await user.getUidByUserslug(req.params.userslug);
+	if (!targetUid) {
+		return next();
+	}
+
+	const [isAdminOrGlobalMod, canEdit] = await Promise.all([
+		user.isAdminOrGlobalMod(req.uid),
+		privileges.users.canEdit(req.uid, targetUid),
+	]);
+
+	if (!isAdminOrGlobalMod && !canEdit) {
+		return next();
+	}
+
+	req.session.registration = req.session.registration || {};
+	req.session.registration.updateEmail = true;
+	req.session.registration.uid = targetUid;
+	helpers.redirect(res, '/register/complete');
 };
 
 async function renderRoute(name, req, res, next) {

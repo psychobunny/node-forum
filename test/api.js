@@ -111,6 +111,9 @@ describe('API', async () => {
 		// Create sample users
 		const adminUid = await user.create({ username: 'admin', password: '123456', email: 'test@example.org' });
 		const unprivUid = await user.create({ username: 'unpriv', password: '123456', email: 'unpriv@example.org' });
+		await user.email.confirmByUid(adminUid);
+		await user.email.confirmByUid(unprivUid);
+
 		for (let x = 0; x < 4; x++) {
 			// eslint-disable-next-line no-await-in-loop
 			await user.create({ username: 'deleteme', password: '123456' });	// for testing of DELETE /users (uids 5, 6) and DELETE /user/:uid/account (uid 7)
@@ -203,6 +206,7 @@ describe('API', async () => {
 			method: dummyEmailerHook,
 		});
 
+		// All tests run as admin user
 		jar = await helpers.loginUser('admin', '123456');
 
 		// Retrieve CSRF token using cookie, to test Write API
@@ -464,6 +468,18 @@ describe('API', async () => {
 							jar: jar,
 						});
 						csrfToken = config.csrf_token;
+					}
+				});
+
+				it('should back out of a registration interstitial if needed', async () => {
+					const affectedPaths = ['GET /api/user/{userslug}/edit/email'];
+					if (affectedPaths.includes(`${method.toUpperCase()} ${path}`)) {
+						await request({
+							uri: `${nconf.get('url')}/register/abort`,
+							method: 'POST',
+							jar,
+							simple: false,
+						});
 					}
 				});
 			});

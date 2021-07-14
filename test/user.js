@@ -18,7 +18,7 @@ const Password = require('../src/password');
 const groups = require('../src/groups');
 const helpers = require('./helpers');
 const meta = require('../src/meta');
-const plugins = require('../src/plugins');
+const events = require('../src/events');
 const socketUser = require('../src/socket.io/user');
 
 describe('User', () => {
@@ -69,8 +69,11 @@ describe('User', () => {
 
 	describe('.create(), when created', () => {
 		it('should be created properly', async () => {
-			testUid = await User.create({ username: userData.username, password: userData.password, email: userData.email });
+			testUid = await User.create({ username: userData.username, password: userData.password });
 			assert.ok(testUid);
+
+			await User.setUserField(testUid, 'email', userData.email);
+			await User.email.confirmByUid(testUid);
 		});
 
 		it('should be created properly', async () => {
@@ -559,12 +562,10 @@ describe('User', () => {
 	describe('passwordReset', () => {
 		let uid;
 		let code;
-		before((done) => {
-			User.create({ username: 'resetuser', password: '123456', email: 'reset@me.com' }, (err, newUid) => {
-				assert.ifError(err);
-				uid = newUid;
-				done();
-			});
+		before(async () => {
+			uid = await User.create({ username: 'resetuser', password: '123456' });
+			await User.setUserField(uid, 'email', 'reset@me.com');
+			await User.email.confirmByUid(uid);
 		});
 
 		it('.generate() should generate a new reset code', (done) => {
@@ -812,16 +813,14 @@ describe('User', () => {
 		let uid;
 		let jar;
 
-		before((done) => {
-			User.create({ username: 'updateprofile', email: 'update@me.com', password: '123456' }, (err, newUid) => {
-				assert.ifError(err);
-				uid = newUid;
-				helpers.loginUser('updateprofile', '123456', (err, _jar) => {
-					assert.ifError(err);
-					jar = _jar;
-					done();
-				});
-			});
+		before(async () => {
+			const newUid = await User.create({ username: 'updateprofile', email: 'update@me.com', password: '123456' });
+			uid = newUid;
+
+			await User.email.confirmByUid(uid);
+
+			const _jar = await helpers.loginUser('updateprofile', '123456');
+			jar = _jar;
 		});
 
 		it('should return error if data is invalid', (done) => {
@@ -838,42 +837,55 @@ describe('User', () => {
 			});
 		});
 
-		it('should update a user\'s profile', (done) => {
-			User.create({ username: 'justforupdate', email: 'just@for.updated', password: '123456' }, (err, uid) => {
-				assert.ifError(err);
-				const data = {
-					uid: uid,
-					username: 'updatedUserName',
-					email: 'updatedEmail@me.com',
-					fullname: 'updatedFullname',
-					website: 'http://nodebb.org',
-					location: 'izmir',
-					groupTitle: 'testGroup',
-					birthday: '01/01/1980',
-					signature: 'nodebb is good',
-					password: '123456',
-				};
-				socketUser.updateProfile({ uid: uid }, { ...data, password: '123456', invalid: 'field' }, (err, result) => {
+		describe('.updateProfile()', () => {
+			let uid;
+
+			it('should update a user\'s profile', (done) => {
+				User.create({ username: 'justforupdate', email: 'just@for.updated', password: '123456' }, (err, _uid) => {
+					uid = _uid;
+
 					assert.ifError(err);
-
-					assert.equal(result.username, 'updatedUserName');
-					assert.equal(result.userslug, 'updatedusername');
-					assert.equal(result.email, 'updatedEmail@me.com');
-
-					db.getObject(`user:${uid}`, (err, userData) => {
+					const data = {
+						uid: uid,
+						username: 'updatedUserName',
+						email: 'updatedEmail@me.com',
+						fullname: 'updatedFullname',
+						website: 'http://nodebb.org',
+						location: 'izmir',
+						groupTitle: 'testGroup',
+						birthday: '01/01/1980',
+						signature: 'nodebb is good',
+						password: '123456',
+					};
+					socketUser.updateProfile({ uid: uid }, { ...data, password: '123456', invalid: 'field' }, (err, result) => {
 						assert.ifError(err);
-						Object.keys(data).forEach((key) => {
-							if (key !== 'password') {
-								assert.equal(data[key], userData[key]);
-							} else {
-								assert(userData[key].startsWith('$2a$'));
-							}
+
+						assert.equal(result.username, 'updatedUserName');
+						assert.equal(result.userslug, 'updatedusername');
+						assert.equal(result.location, 'izmir');
+
+						db.getObject(`user:${uid}`, (err, userData) => {
+							assert.ifError(err);
+							Object.keys(data).forEach((key) => {
+								if (key === 'email') {
+									assert.strictEqual(userData.email, 'just@for.updated');	// email remains the same until confirmed
+								} else if (key !== 'password') {
+									assert.equal(data[key], userData[key]);
+								} else {
+									assert(userData[key].startsWith('$2a$'));
+								}
+							});
+							// updateProfile only saves valid fields
+							assert.strictEqual(userData.invalid, undefined);
+							done();
 						});
-						// updateProfile only saves valid fields
-						assert.strictEqual(userData.invalid, undefined);
-						done();
 					});
 				});
+			});
+
+			it('should also generate an email confirmation code for the changed email', async () => {
+				const confirmSent = await User.email.isValidationPending(uid, 'updatedemail@me.com');
+				assert.strictEqual(confirmSent, true);
 			});
 		});
 
@@ -964,7 +976,10 @@ describe('User', () => {
 			await socketUser.changeUsernameEmail({ uid: uid }, { uid: uid, username: longName, email: 'verylong@name.com' });
 			const userData = await db.getObject(`user:${uid}`);
 			assert.strictEqual(userData.username, longName);
-			assert.strictEqual(userData.email, 'verylong@name.com');
+
+			const event = (await events.getEvents('email-confirmation-sent', 0, 0)).pop();
+			assert.strictEqual(parseInt(event.uid, 10), uid);
+			assert.strictEqual(event.email, 'verylong@name.com');
 		});
 
 		it('should not update a user\'s username if it did not change', (done) => {
@@ -991,39 +1006,12 @@ describe('User', () => {
 			assert.strictEqual(_err.message, '[[error:invalid-password]]');
 		});
 
-		it('should change email', (done) => {
-			User.create({ username: 'pooremailupdate', email: 'poor@update.me', password: '123456' }, (err, uid) => {
-				assert.ifError(err);
-				socketUser.changeUsernameEmail({ uid: uid }, { uid: uid, email: 'updatedAgain@me.com', password: '123456' }, (err) => {
-					assert.ifError(err);
-					db.getObjectField(`user:${uid}`, 'email', (err, email) => {
-						assert.ifError(err);
-						assert.equal(email, 'updatedAgain@me.com');
-						done();
-					});
-				});
-			});
-		});
+		it('should send validation email', async () => {
+			const uid = await User.create({ username: 'pooremailupdate', email: 'poor@update.me', password: '123456' });
+			await User.email.expireValidation(uid);
+			await socketUser.changeUsernameEmail({ uid: uid }, { uid: uid, email: 'updatedAgain@me.com', password: '123456' });
 
-		it('should error if email is identical', async () => {
-			await User.create({
-				username: 'trimtest1',
-				email: 'trim1@trim.com',
-			});
-			const uid2 = await User.create({
-				username: 'trimtest2',
-				email: 'trim2@trim.com',
-			});
-			let err;
-			try {
-				await socketUser.changeUsernameEmail({ uid: uid2 }, {
-					uid: uid2,
-					email: '  trim1@trim.com',
-				});
-			} catch (_err) {
-				err = _err;
-			}
-			assert.strictEqual(err.message, '[[error:email-taken]]');
+			assert.strictEqual(await User.email.isValidationPending(uid), true);
 		});
 
 		it('should update cover image', (done) => {
@@ -1295,32 +1283,31 @@ describe('User', () => {
 			});
 		});
 
-		it('should load edit/email page', (done) => {
-			request(`${nconf.get('url')}/api/user/updatedagain/edit/email`, { jar: jar, json: true }, (err, res, body) => {
-				assert.ifError(err);
-				assert.equal(res.statusCode, 200);
-				assert(body);
-				done();
+		it('should load edit/email page', async () => {
+			const res = await requestAsync(`${nconf.get('url')}/api/user/updatedagain/edit/email`, { jar: jar, json: true, resolveWithFullResponse: true });
+			assert.strictEqual(res.statusCode, 200);
+			assert(res.body);
+
+			// Accessing this page will mark the user's account as needing an updated email, below code undo's.
+			await requestAsync({
+				uri: `${nconf.get('url')}/register/abort`,
+				jar,
+				method: 'POST',
+				simple: false,
 			});
 		});
 
-		it('should load user\'s groups page', (done) => {
-			groups.create({
+		it('should load user\'s groups page', async () => {
+			await groups.create({
 				name: 'Test',
 				description: 'Foobar!',
-			}, (err) => {
-				assert.ifError(err);
-				groups.join('Test', uid, (err) => {
-					assert.ifError(err);
-					request(`${nconf.get('url')}/api/user/updatedagain/groups`, { jar: jar, json: true }, (err, res, body) => {
-						assert.ifError(err);
-						assert.equal(res.statusCode, 200);
-						assert(Array.isArray(body.groups));
-						assert.equal(body.groups[0].name, 'Test');
-						done();
-					});
-				});
 			});
+
+			await groups.join('Test', uid);
+			const body = await requestAsync(`${nconf.get('url')}/api/user/updatedagain/groups`, { jar: jar, json: true });
+
+			assert(Array.isArray(body.groups));
+			assert.equal(body.groups[0].name, 'Test');
 		});
 	});
 
@@ -1766,43 +1753,9 @@ describe('User', () => {
 			meta.config.allowAccountDeletion = oldValue;
 		});
 
-		it('should fail if data is invalid', (done) => {
-			socketUser.emailExists({ uid: testUid }, null, (err) => {
-				assert.equal(err.message, '[[error:invalid-data]]');
-				done();
-			});
-		});
-
-		it('should return true if email exists', (done) => {
-			socketUser.emailExists({ uid: testUid }, { email: 'john@example.com' }, (err, exists) => {
-				assert.ifError(err);
-				assert(exists);
-				done();
-			});
-		});
-
-		it('should return false if email does not exist', (done) => {
-			socketUser.emailExists({ uid: testUid }, { email: 'does@not.exist' }, (err, exists) => {
-				assert.ifError(err);
-				assert(!exists);
-				done();
-			});
-		});
-
-		it('should error if requireEmailConfirmation is disabled', (done) => {
-			socketUser.emailConfirm({ uid: testUid }, {}, (err) => {
-				assert.equal(err.message, '[[error:email-confirmations-are-disabled]]');
-				done();
-			});
-		});
-
-		it('should send email confirm', (done) => {
-			meta.config.requireEmailConfirmation = 1;
-			socketUser.emailConfirm({ uid: testUid }, {}, (err) => {
-				assert.ifError(err);
-				meta.config.requireEmailConfirmation = 0;
-				done();
-			});
+		it('should send email confirm', async () => {
+			await User.email.expireValidation(testUid);
+			await socketUser.emailConfirm({ uid: testUid }, {});
 		});
 
 		it('should send reset email', (done) => {

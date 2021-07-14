@@ -243,27 +243,12 @@ module.exports = function (User) {
 			return;
 		}
 
-		await db.sortedSetRemove('email:uid', oldEmail.toLowerCase());
-		await db.sortedSetRemove('email:sorted', `${oldEmail.toLowerCase()}:${uid}`);
-		await User.auth.revokeAllSessions(uid);
-
-		await Promise.all([
-			db.sortedSetAddBulk([
-				['email:uid', uid, newEmail.toLowerCase()],
-				['email:sorted', 0, `${newEmail.toLowerCase()}:${uid}`],
-				[`user:${uid}:emails`, Date.now(), `${newEmail}:${Date.now()}`],
-			]),
-			User.setUserFields(uid, { email: newEmail, 'email:confirmed': 0 }),
-			groups.leave('verified-users', uid),
-			groups.join('unverified-users', uid),
-			User.reset.cleanByUid(uid),
-		]);
-
-		if (meta.config.requireEmailConfirmation && newEmail) {
+		if (newEmail) {
 			await User.email.sendValidationEmail(uid, {
 				email: newEmail,
 				subject: '[[email:email.verify-your-email.subject]]',
 				template: 'verify_email',
+				force: 1,
 			}).catch(err => winston.error(`[user.create] Validation email failed to send\n[emailer.send] ${err.stack}`));
 		}
 	}
